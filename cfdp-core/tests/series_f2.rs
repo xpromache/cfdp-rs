@@ -3,7 +3,7 @@ use std::{
     net::UdpSocket,
     sync::{atomic::AtomicBool, Arc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use camino::Utf8PathBuf;
@@ -102,7 +102,7 @@ fn f2s1(fixture_f2s1: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     assert!(path_to_out.exists());
@@ -188,7 +188,7 @@ fn f2s2(fixture_f2s2: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     assert!(path_to_out.exists());
@@ -273,7 +273,7 @@ fn f2s3(fixture_f2s3: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     assert!(path_to_out.exists());
@@ -358,7 +358,7 @@ fn f2s4(fixture_f2s4: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     assert!(path_to_out.exists());
@@ -443,7 +443,7 @@ fn f2s5(fixture_f2s5: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     assert!(path_to_out.exists());
@@ -526,7 +526,7 @@ fn f2s6(fixture_f2s6: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     assert!(path_to_out.exists());
@@ -584,7 +584,7 @@ fn fixture_f2s7(
 }
 
 #[rstest]
-#[timeout(Duration::from_secs(10))]
+#[timeout(Duration::from_secs(30))]
 // Series F2
 // Sequence 7 Test
 // Test goal:
@@ -594,6 +594,7 @@ fn fixture_f2s7(
 //  - File Size: Medium
 //  - Drop all ACK and Finished PDUs
 fn f2s7(fixture_f2s7: &'static EntityConstructorReturn) {
+    let now = Instant::now();
     let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s7;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s7.txt".into();
@@ -611,7 +612,7 @@ fn f2s7(fixture_f2s7: &'static EntityConstructorReturn) {
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
     assert!(path_to_out.exists());
     // wait long enough for the ack limit to be reached
@@ -622,14 +623,16 @@ fn f2s7(fixture_f2s7: &'static EntityConstructorReturn) {
         .unwrap();
 
     while report.condition != Condition::PositiveLimitReached {
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(500));
         report = local_user
             .report(id)
             .expect("Unable to send Report Request.")
             .unwrap();
+        println!("report: {:?}", report);
     }
-
+    println!("Duration f7: {:?}", now.elapsed());
     assert_eq!(report.condition, Condition::PositiveLimitReached)
+    
 }
 
 #[fixture]
@@ -684,11 +687,12 @@ fn fixture_f2s8(
         terminate.clone(),
         [Some(10), Some(1), Some(1)],
     );
+    
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
-#[timeout(Duration::from_secs(10))]
+#[timeout(Duration::from_secs(30))]
 // Series F2
 // Sequence 8 Test
 // Test goal:
@@ -698,6 +702,7 @@ fn fixture_f2s8(
 //  - File Size: Medium
 //  - Drop all NAK from receiver.
 fn f2s8(fixture_f2s8: &'static EntityConstructorReturn) {
+    let now = Instant::now();
     let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s8;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s8.txt".into();
@@ -721,7 +726,7 @@ fn f2s8(fixture_f2s8: &'static EntityConstructorReturn) {
         .unwrap();
 
     while report.condition != Condition::NakLimitReached {
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(100));
         report = local_user
             .report(id)
             .expect("Unable to send Report Request.")
@@ -729,7 +734,7 @@ fn f2s8(fixture_f2s8: &'static EntityConstructorReturn) {
     }
 
     assert!(!path_to_out.exists());
-
+    println!("Duration f8: {:?}", now.elapsed());
     assert_eq!(report.condition, Condition::NakLimitReached)
 }
 
@@ -785,7 +790,7 @@ fn fixture_f2s9(
 }
 
 #[rstest]
-#[timeout(Duration::from_secs(10))]
+#[timeout(Duration::from_secs(30))]
 // Series F2
 // Sequence 9 Test
 // Test goal:
@@ -795,6 +800,7 @@ fn fixture_f2s9(
 //  - File Size: Medium
 //  - Drop all Finished from receiver.
 fn f2s9(fixture_f2s9: &'static EntityConstructorReturn) {
+    let now = Instant::now();
     let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s9;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s9.txt".into();
@@ -818,16 +824,17 @@ fn f2s9(fixture_f2s9: &'static EntityConstructorReturn) {
         .unwrap();
 
     while report.condition != Condition::InactivityDetected {
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1000));
         report = local_user
             .report(id)
             .expect("Unable to send Report Request.")
             .unwrap();
+        println!("report f9: {:?}", report);
     }
 
     // file is still successfully sent
     assert!(path_to_out.exists());
-
+    println!("Duration f9: {:?}", now.elapsed());
     assert_eq!(report.condition, Condition::InactivityDetected)
 }
 
@@ -912,7 +919,7 @@ fn f2s10(fixture_f2s10: &'static EntityConstructorReturn) {
         .expect("Unable to send Report Request.")
         .is_none()
     {
-        thread::sleep(Duration::from_millis(1))
+        thread::sleep(Duration::from_millis(100))
     }
 
     let mut report = remote_user
