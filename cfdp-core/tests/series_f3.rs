@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, thread, time::Duration};
+use std::{fs::OpenOptions, future::Future, time::Duration};
 
 use camino::Utf8PathBuf;
 use cfdp_core::{
@@ -25,8 +25,9 @@ use common::{get_filestore, UsersAndFilestore};
 //  - Execute remote put from remote. File should exist on remote
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s01(get_filestore: &UsersAndFilestore) {
-    let (_local_user, remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s01(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (_local_user, remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/small_f3s1.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -51,10 +52,11 @@ fn f3s01(get_filestore: &UsersAndFilestore) {
                 )),
             ],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(path_to_out.exists())
 }
@@ -68,8 +70,9 @@ fn f3s01(get_filestore: &UsersAndFilestore) {
 //  - Create New file on remote
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s02(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s02(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/f3s2.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -87,10 +90,11 @@ fn f3s02(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(path_to_out.exists())
 }
@@ -104,8 +108,9 @@ fn f3s02(get_filestore: &UsersAndFilestore) {
 //  - Create New file on remote, then delete it with another transaction
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s03(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s03(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/f3s3.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -123,10 +128,11 @@ fn f3s03(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(path_to_out.exists());
 
@@ -143,24 +149,28 @@ fn f3s03(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
     while local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .is_none()
     {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.state != TransactionState::Terminated {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }
@@ -176,8 +186,9 @@ fn f3s03(get_filestore: &UsersAndFilestore) {
 //  - Create New file on remote, then Rename it in another transaction
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s04(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s04(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/f3s4.txt".into();
     let new_file: Utf8PathBuf = "remote/f3s4_new.txt".into();
@@ -197,10 +208,11 @@ fn f3s04(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(path_to_out.exists());
 
@@ -217,25 +229,29 @@ fn f3s04(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .is_none()
     {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.state != TransactionState::Terminated {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }
@@ -255,8 +271,9 @@ fn f3s04(get_filestore: &UsersAndFilestore) {
 //  - Append new file to first file
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s05(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s05(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/f3s5.txt".into();
     let new_file: Utf8PathBuf = "remote/medium_f3s5.txt".into();
@@ -283,23 +300,27 @@ fn f3s05(get_filestore: &UsersAndFilestore) {
             ],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while local_user
         .report(id)
+        .await
         .expect("unable to get report.")
         .is_none()
     {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let mut report = local_user
         .report(id)
+        .await
         .expect("unable to get report.")
         .unwrap();
     while report.state != TransactionState::Terminated {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("unable to get report.")
             .unwrap();
     }
@@ -332,8 +353,9 @@ fn f3s05(get_filestore: &UsersAndFilestore) {
 //  - Replace small file with medium file
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s06(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s06(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/f3s6.txt".into();
     let new_file: Utf8PathBuf = "remote/medium_f3s6.txt".into();
@@ -349,10 +371,11 @@ fn f3s06(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(path_to_out.exists());
 
@@ -369,25 +392,29 @@ fn f3s06(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while local_user
         .report(id)
+        .await
         .expect("Unable to send None Report Request.")
         .is_none()
     {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send First Report Request.")
         .unwrap();
 
     while report.state != TransactionState::Terminated {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Intrim Report Request.")
             .unwrap();
     }
@@ -417,8 +444,9 @@ fn f3s06(get_filestore: &UsersAndFilestore) {
 //  - Create new directory
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s07(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s07(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/data".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -436,10 +464,11 @@ fn f3s07(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
@@ -456,8 +485,9 @@ fn f3s07(get_filestore: &UsersAndFilestore) {
 //  - Then remove it
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s08(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s08(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/data_f3s8".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -475,10 +505,11 @@ fn f3s08(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
@@ -497,10 +528,11 @@ fn f3s08(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(!path_to_out.exists())
@@ -516,8 +548,9 @@ fn f3s08(get_filestore: &UsersAndFilestore) {
 //  - Then DenyFile and verify it is removed
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s09(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s09(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f3s9.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -531,10 +564,11 @@ fn f3s09(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
@@ -553,10 +587,11 @@ fn f3s09(get_filestore: &UsersAndFilestore) {
             }],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(!path_to_out.exists())
@@ -572,8 +607,9 @@ fn f3s09(get_filestore: &UsersAndFilestore) {
 //  - verify the listing file is created
 #[rstest]
 #[timeout(Duration::from_secs(10))]
-fn f3s10(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+#[tokio::test]
+async fn f3s10(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "/local/remote.listing".into();
     let path_to_out = filestore.get_native_path(out_file);
@@ -592,10 +628,11 @@ fn f3s10(get_filestore: &UsersAndFilestore) {
                 }),
             ))],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());

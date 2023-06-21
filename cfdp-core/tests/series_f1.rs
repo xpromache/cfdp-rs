@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    net::UdpSocket,
+    future::Future,
     sync::{atomic::AtomicBool, Arc},
-    thread,
     time::Duration,
 };
 
@@ -24,9 +23,11 @@ use common::{
     create_daemons, get_filestore, terminate, EntityConstructorReturn, LossyTransport,
     TransportIssue, UsersAndFilestore,
 };
+use tokio::net::UdpSocket;
 
 #[rstest]
 #[timeout(Duration::from_secs(2))]
+#[tokio::test]
 // Series F1
 // Sequence 1 Test
 // Test goal:
@@ -34,8 +35,8 @@ use common::{
 // Configuration:
 //  - Unacknowledged
 //  - File Size: Small (file fits in single pdu)
-fn f1s1(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+async fn f1s1(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/small_f1s1.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -49,16 +50,19 @@ fn f1s1(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
-    assert!(path_to_out.exists())
+    assert!(path_to_out.exists());
+    tokio::time::sleep(Duration::from_millis(100)).await
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F1
 // Sequence 2 Test
 // Test goal:
@@ -66,8 +70,8 @@ fn f1s1(get_filestore: &UsersAndFilestore) {
 // Configuration:
 //  - Unacknowledged
 //  - File Size: Medium
-fn f1s2(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+async fn f1s2(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f1s2.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -81,16 +85,18 @@ fn f1s2(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
     assert!(path_to_out.exists())
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(10))]
+#[tokio::test]
 // Series F1
 // Sequence 3 Test
 // Test goal:
@@ -98,8 +104,8 @@ fn f1s2(get_filestore: &UsersAndFilestore) {
 // Configuration:
 //  - Acknowledged
 //  - File Size: Medium
-fn f1s3(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+async fn f1s3(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f1s3.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -113,26 +119,30 @@ fn f1s3(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 
     assert!(path_to_out.exists())
 }
 
 #[fixture]
-#[once]
-fn fixture_f1s4(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f1s4(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -166,12 +176,14 @@ fn fixture_f1s4(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(30))]
+#[tokio::test]
 // Series F1
 // Sequence 4 Test
 // Test goal:
@@ -180,8 +192,8 @@ fn fixture_f1s4(
 //  - Acknowledged
 //  - File Size: Medium
 //  - ~1% data lost in transport
-fn f1s4(fixture_f1s4: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f1s4;
+async fn f1s4(fixture_f1s4: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f1s4.await;
     let out_file: Utf8PathBuf = "remote/medium_f1s4.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
 
@@ -194,26 +206,30 @@ fn f1s4(fixture_f1s4: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 
     assert!(path_to_out.exists())
 }
 
 #[fixture]
-#[once]
-fn fixture_f1s5(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f1s5(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -247,12 +263,14 @@ fn fixture_f1s5(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(30))]
+#[tokio::test]
 // Series F1
 // Sequence 5 Test
 // Test goal:
@@ -261,8 +279,8 @@ fn fixture_f1s5(
 //  - Acknowledged
 //  - File Size: Medium
 //  - ~1% data duplicated in transport
-fn f1s5(fixture_f1s5: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f1s5;
+async fn f1s5(fixture_f1s5: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f1s5.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f1s5.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -276,26 +294,30 @@ fn f1s5(fixture_f1s5: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 
     assert!(path_to_out.exists())
 }
 
 #[fixture]
-#[once]
-fn fixture_f1s6(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f1s6(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -329,12 +351,14 @@ fn fixture_f1s6(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F1
 // Sequence 6 Test
 // Test goal:
@@ -343,9 +367,9 @@ fn fixture_f1s6(
 //  - Acknowledged
 //  - File Size: Medium
 //  - ~1% data re-ordered in transport
-fn f1s6(fixture_f1s6: &'static EntityConstructorReturn) {
+async fn f1s6(fixture_f1s6: impl Future<Output = EntityConstructorReturn>) {
     // let mut user = User::new(Some(_local_path))
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f1s6;
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f1s6.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f1s6.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -359,10 +383,11 @@ fn f1s6(fixture_f1s6: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 
     assert!(path_to_out.exists())
@@ -370,6 +395,7 @@ fn f1s6(fixture_f1s6: &'static EntityConstructorReturn) {
 
 #[rstest]
 #[timeout(Duration::from_secs(10))]
+#[tokio::test]
 // Series F1
 // Sequence 7 Test
 // Test goal:
@@ -379,14 +405,14 @@ fn f1s6(fixture_f1s6: &'static EntityConstructorReturn) {
 //  - File Size: Zero
 //  - Have proxy put request send Entity 0 data,
 //  -   then have a proxy put request in THAT message send data back to entity 1
-fn f1s7(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+async fn f1s7(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "/remote/medium_f1s7.txt".into();
     let interim_file: Utf8PathBuf = "/local/medium_f1s7.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
     let path_interim = filestore.get_native_path(&interim_file);
-
+    println!("f1s7 step 20");
     local_user
         .put(PutRequest {
             source_filename: "".into(),
@@ -407,11 +433,14 @@ fn f1s7(get_filestore: &UsersAndFilestore) {
                 )),
             ],
         })
+        .await
         .expect("unable to send put request.");
+    println!("f1s7 step 30");
     while !path_interim.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
     assert!(path_interim.exists());
+    println!("f1s7 step 100");
 
     local_user
         .put(PutRequest {
@@ -448,10 +477,13 @@ fn f1s7(get_filestore: &UsersAndFilestore) {
                 )),
             ],
         })
+        .await
         .expect("Unable to send put request.");
 
+    println!("f1s7 step 200");
+
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 
     assert!(path_to_out.exists())
@@ -459,14 +491,15 @@ fn f1s7(get_filestore: &UsersAndFilestore) {
 
 #[rstest]
 #[timeout(Duration::from_secs(10))]
+#[tokio::test]
 // Series F1
 // Sequence 8 Test
 // Test goal:
 //  - Check User Cancel Functionality
 // Configuration:
 //  - Cancel initiated from Sender
-fn f1s8(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+async fn f1s8(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f1s8.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -480,22 +513,30 @@ fn f1s8(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
-    while local_user.report(id).expect("cannot send report").is_none() {
-        thread::sleep(Duration::from_millis(100));
+    while local_user
+        .report(id)
+        .await
+        .expect("cannot send report")
+        .is_none()
+    {
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
-    local_user.cancel(id).expect("unable to cancel.");
+    local_user.cancel(id).await.expect("unable to cancel.");
 
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::CancelReceived {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }
@@ -507,14 +548,17 @@ fn f1s8(get_filestore: &UsersAndFilestore) {
 
 #[rstest]
 #[timeout(Duration::from_secs(30))]
+#[tokio::test]
 // Series F1
 // Sequence 9 Test
 // Test goal:
 //  - Check User Cancel Functionality
 // Configuration:
 //  - Cancel initiated from Receiver
-fn f1s9(get_filestore: &UsersAndFilestore) {
-    let (local_user, remote_user, filestore) = get_filestore;
+async fn f1s9(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let (local_user, remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f1s9.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -528,27 +572,32 @@ fn f1s9(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
     while remote_user
         .report(id)
+        .await
         .expect("cannot send report")
         .is_none()
     {
-        thread::sleep(Duration::from_micros(1));
+        tokio::time::sleep(Duration::from_micros(1)).await
     }
-    remote_user.cancel(id).expect("unable to cancel.");
+    remote_user.cancel(id).await.expect("unable to cancel.");
 
     let mut report = remote_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::CancelReceived {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(1000)).await;
         report = remote_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
+        println!("report: {:?}", report);
     }
 
     assert_eq!(report.condition, Condition::CancelReceived);
@@ -558,6 +607,7 @@ fn f1s9(get_filestore: &UsersAndFilestore) {
 
 #[rstest]
 #[timeout(Duration::from_secs(10))]
+#[tokio::test]
 // Series F1
 // Sequence 10 Test
 // Test goal:
@@ -565,8 +615,8 @@ fn f1s9(get_filestore: &UsersAndFilestore) {
 // Configuration:
 //  - Unacknowledged Transmission
 //  - Cancel initiated from Sender
-fn f1s10(get_filestore: &UsersAndFilestore) {
-    let (local_user, _remote_user, filestore) = get_filestore;
+async fn f1s10(get_filestore: impl Future<Output = UsersAndFilestore>) {
+    let (local_user, _remote_user, filestore) = get_filestore.await;
 
     let out_file: Utf8PathBuf = "remote/large_f1s10.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -580,23 +630,31 @@ fn f1s10(get_filestore: &UsersAndFilestore) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
-    while local_user.report(id).expect("cannot send report").is_none() {
-        thread::sleep(Duration::from_millis(100));
+    while local_user
+        .report(id)
+        .await
+        .expect("cannot send report")
+        .is_none()
+    {
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    local_user.cancel(id).expect("unable to cancel.");
+    local_user.cancel(id).await.expect("unable to cancel.");
 
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::CancelReceived {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }

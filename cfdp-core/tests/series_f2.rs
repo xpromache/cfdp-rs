@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    net::UdpSocket,
+    future::Future,
     sync::{atomic::AtomicBool, Arc},
-    thread,
     time::Duration,
 };
 
@@ -20,19 +19,23 @@ use common::{
     create_daemons, get_filestore, terminate, EntityConstructorReturn, LossyTransport,
     TransportIssue, UsersAndFilestore,
 };
+use tokio::net::UdpSocket;
 
 #[fixture]
-#[once]
-fn fixture_f2s1(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s1(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
+    let (_, _, filestore) = get_filestore.await;
 
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -69,12 +72,14 @@ fn fixture_f2s1(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F2
 // Sequence 1 Test
 // Test goal:
@@ -83,9 +88,9 @@ fn fixture_f2s1(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop first instance of Metadata PDU
-fn f2s1(fixture_f2s1: &'static EntityConstructorReturn) {
+async fn f2s1(fixture_f2s1: impl Future<Output = EntityConstructorReturn>) {
     // let mut user = User::new(Some(_local_path))
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s1;
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s1.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s1.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -99,27 +104,31 @@ fn f2s1(fixture_f2s1: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s2(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s2(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
+    let (_, _, filestore) = get_filestore.await;
 
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -156,12 +165,14 @@ fn fixture_f2s2(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F2
 // Sequence 2 Test
 // Test goal:
@@ -170,8 +181,8 @@ fn fixture_f2s2(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop first instance of EoF PDU
-fn f2s2(fixture_f2s2: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s2;
+async fn f2s2(fixture_f2s2: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s2.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s2.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -185,26 +196,30 @@ fn f2s2(fixture_f2s2: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s3(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s3(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -241,12 +256,14 @@ fn fixture_f2s3(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F2
 // Sequence 3 Test
 // Test goal:
@@ -255,8 +272,8 @@ fn fixture_f2s3(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop first instance of Finished PDU
-fn f2s3(fixture_f2s3: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s3;
+async fn f2s3(fixture_f2s3: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s3.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s3.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -270,26 +287,30 @@ fn f2s3(fixture_f2s3: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s4(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s4(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -326,12 +347,14 @@ fn fixture_f2s4(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F2
 // Sequence 3 Test
 // Test goal:
@@ -340,8 +363,8 @@ fn fixture_f2s4(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop first instance of ACK(EOF) PDU
-fn f2s4(fixture_f2s4: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s4;
+async fn f2s4(fixture_f2s4: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s4.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s4.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -355,26 +378,30 @@ fn f2s4(fixture_f2s4: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s5(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s5(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -411,12 +438,14 @@ fn fixture_f2s5(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(5))]
+#[tokio::test]
 // Series F2
 // Sequence 5 Test
 // Test goal:
@@ -425,8 +454,8 @@ fn fixture_f2s5(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop first instance of ACK(Fin) PDU
-fn f2s5(fixture_f2s5: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s5;
+async fn f2s5(fixture_f2s5: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s5.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s5.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -440,26 +469,30 @@ fn f2s5(fixture_f2s5: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s6(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s6(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -494,12 +527,14 @@ fn fixture_f2s6(
         remote_transport_map,
         terminate.clone(),
         [None; 3],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(15))]
+#[tokio::test]
 // Series F2
 // Sequence 6 Test
 // Test goal:
@@ -508,8 +543,8 @@ fn fixture_f2s6(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop first instance of Every non-EOF pdu in both directions
-fn f2s6(fixture_f2s6: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s6;
+async fn f2s6(fixture_f2s6: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s6.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s6.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -523,26 +558,30 @@ fn f2s6(fixture_f2s6: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(path_to_out.exists());
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s7(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s7(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -579,12 +618,14 @@ fn fixture_f2s7(
         remote_transport_map,
         terminate.clone(),
         [Some(10), None, None],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(15))]
+#[tokio::test]
 // Series F2
 // Sequence 7 Test
 // Test goal:
@@ -593,8 +634,8 @@ fn fixture_f2s7(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop all ACK and Finished PDUs
-fn f2s7(fixture_f2s7: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s7;
+async fn f2s7(fixture_f2s7: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s7.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s7.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -608,23 +649,26 @@ fn f2s7(fixture_f2s7: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(path_to_out.exists());
     // wait long enough for the ack limit to be reached
 
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::PositiveLimitReached {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }
@@ -633,16 +677,19 @@ fn f2s7(fixture_f2s7: &'static EntityConstructorReturn) {
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s8(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s8(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -683,12 +730,14 @@ fn fixture_f2s8(
         remote_transport_map,
         terminate.clone(),
         [Some(10), Some(1), Some(1)],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(15))]
+#[tokio::test]
 // Series F2
 // Sequence 8 Test
 // Test goal:
@@ -697,8 +746,8 @@ fn fixture_f2s8(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop all NAK from receiver.
-fn f2s8(fixture_f2s8: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s8;
+async fn f2s8(fixture_f2s8: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s8.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s8.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -712,18 +761,21 @@ fn f2s8(fixture_f2s8: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     // wait long enough for the nak limit to be reached
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::NakLimitReached {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }
@@ -734,16 +786,19 @@ fn f2s8(fixture_f2s8: &'static EntityConstructorReturn) {
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s9(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s9(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -780,12 +835,14 @@ fn fixture_f2s9(
         remote_transport_map,
         terminate.clone(),
         [Some(1), Some(10), Some(1)],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(15))]
+#[tokio::test]
 // Series F2
 // Sequence 9 Test
 // Test goal:
@@ -794,8 +851,10 @@ fn fixture_f2s9(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop all Finished from receiver.
-fn f2s9(fixture_f2s9: &'static EntityConstructorReturn) {
-    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s9;
+async fn f2s9(fixture_f2s9: impl Future<Output = EntityConstructorReturn>) {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let (local_user, _remote_user, filestore, _local, _remote) = fixture_f2s9.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s9.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -809,18 +868,21 @@ fn f2s9(fixture_f2s9: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     // wait long enough for the nak limit to be reached
     let mut report = local_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::InactivityDetected {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = local_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }
@@ -832,16 +894,19 @@ fn f2s9(fixture_f2s9: &'static EntityConstructorReturn) {
 }
 
 #[fixture]
-#[once]
-fn fixture_f2s10(
-    get_filestore: &UsersAndFilestore,
+async fn fixture_f2s10(
+    get_filestore: impl Future<Output = UsersAndFilestore>,
     terminate: &Arc<AtomicBool>,
 ) -> EntityConstructorReturn {
-    let (_, _, filestore) = get_filestore;
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
+    let (_, _, filestore) = get_filestore.await;
+    let remote_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind remote UDP.");
     let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
+    let local_udp = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("Unable to bind local UDP.");
     let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
     let entity_map = {
@@ -875,12 +940,14 @@ fn fixture_f2s10(
         remote_transport_map,
         terminate.clone(),
         [Some(1), Some(10), Some(10)],
-    );
+    )
+    .await;
     (local_user, remote_user, filestore.clone(), local, remote)
 }
 
 #[rstest]
 #[timeout(Duration::from_secs(15))]
+#[tokio::test]
 // Series F2
 // Sequence 10 Test
 // Test goal:
@@ -889,8 +956,8 @@ fn fixture_f2s10(
 //  - Acknowledged
 //  - File Size: Medium
 //  - Drop every PDU but the first from the sender
-fn f2s10(fixture_f2s10: &'static EntityConstructorReturn) {
-    let (local_user, remote_user, filestore, _local, _remote) = fixture_f2s10;
+async fn f2s10(fixture_f2s10: impl Future<Output = EntityConstructorReturn>) {
+    let (local_user, remote_user, filestore, _local, _remote) = fixture_f2s10.await;
 
     let out_file: Utf8PathBuf = "remote/medium_f2s10.txt".into();
     let path_to_out = filestore.get_native_path(&out_file);
@@ -904,26 +971,30 @@ fn f2s10(fixture_f2s10: &'static EntityConstructorReturn) {
             filestore_requests: vec![],
             message_to_user: vec![],
         })
+        .await
         .expect("unable to send put request.");
 
     // wait long enough for the nak limit to be reached
     while remote_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .is_none()
     {
-        thread::sleep(Duration::from_millis(100))
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 
     let mut report = remote_user
         .report(id)
+        .await
         .expect("Unable to send Report Request.")
         .unwrap();
 
     while report.condition != Condition::InactivityDetected {
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         report = remote_user
             .report(id)
+            .await
             .expect("Unable to send Report Request.")
             .unwrap();
     }

@@ -1,18 +1,18 @@
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
+    future::Future,
     io::{Error as IoError, ErrorKind, Write},
     marker::PhantomData,
-    net::{SocketAddr, ToSocketAddrs, UdpSocket},
+    net::SocketAddr,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
     },
-    thread::{self, JoinHandle},
-    time::Duration,
 };
 
+use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use cfdp_core::{
     daemon::{
@@ -30,13 +30,21 @@ use cfdp_core::{
     transaction::TransactionID,
     transport::{PDUTransport, UdpTransport},
 };
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use itertools::{Either, Itertools};
 use log::{error, info};
 use signal_hook::{consts::TERM_SIGNALS, flag};
 use tempfile::TempDir;
 
 use rstest::fixture;
+use tokio::{
+    net::{ToSocketAddrs, UdpSocket},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        oneshot, OnceCell,
+    },
+    task::JoinHandle,
+};
+
 #[derive(Debug)]
 pub(crate) struct JoD<'a, T> {
     handle: Vec<JoinHandle<T>>,
@@ -203,16 +211,16 @@ pub(crate) struct TestUser {
 }
 impl TestUser {
     pub(crate) fn new<T: FileStore + Send + Sync + 'static>(filestore: Arc<T>) -> Self {
-        let (internal_tx, internal_rx) = bounded::<UserPrimitive>(1);
-        let (indication_tx, indication_rx) = unbounded::<Indication>();
+        let (internal_tx, internal_rx) = channel::<UserPrimitive>(100);
+        let (indication_tx, mut indication_rx) = channel::<Indication>(100);
         let history = Arc::new(RwLock::new(HashMap::<TransactionID, Report>::new()));
 
         let auto_history = history.clone();
         let auto_sender = internal_tx.clone();
 
-        let indication_handle = thread::spawn(move || {
+        let indication_handle = tokio::task::spawn(async move {
             let mut proxy_map = HashMap::new();
-            while let Ok(indication) = indication_rx.recv() {
+            while let Some(indication) = indication_rx.recv().await {
                 // (origin_id, tx_mode, messages)
                 match indication {
                     Indication::MetadataRecv(MetadataRecvIndication {
@@ -225,13 +233,14 @@ impl TestUser {
                             categorize_user_msg(&origin_id, messages);
 
                         for request in put_requests {
-                            let (put_sender, put_recv) = bounded(1);
+                            let (put_sender, put_recv) = oneshot::channel();
 
                             auto_sender
                                 .send(UserPrimitive::Put(request, put_sender))
+                                .await
                                 .expect("Unable to send auto request");
 
-                            let id = put_recv.recv().expect("Recv channel disconnected: ");
+                            let id = put_recv.await.expect("Recv channel disconnected: ");
                             proxy_map.insert(id, origin_id);
                         }
 
@@ -239,6 +248,7 @@ impl TestUser {
                             let primitive = UserPrimitive::Cancel(id);
                             auto_sender
                                 .send(primitive)
+                                .await
                                 .map_err(|_| {
                                     IoError::new(
                                         ErrorKind::ConnectionReset,
@@ -335,7 +345,7 @@ impl TestUser {
                                     },
                                 },
                                 UserRequest::RemoteStatusReport(report_request) => {
-                                    let (report_tx, report_rx) = bounded(0);
+                                    let (report_tx, report_rx) = oneshot::channel();
                                     let id = TransactionID(
                                         report_request.source_entity_id,
                                         report_request.transaction_sequence_number,
@@ -344,6 +354,7 @@ impl TestUser {
 
                                     auto_sender
                                         .send(primitive)
+                                        .await
                                         .map_err(|_| {
                                             IoError::new(
                                                 ErrorKind::ConnectionReset,
@@ -352,7 +363,7 @@ impl TestUser {
                                         })
                                         .expect("error asking for report.");
 
-                                    let report = match report_rx.recv().map_err(|_| {
+                                    let report = match report_rx.await.map_err(|_| {
                                         IoError::new(
                                             ErrorKind::ConnectionReset,
                                             "Daemon Half of User disconnected.",
@@ -408,6 +419,7 @@ impl TestUser {
 
                                     let suspend_indication = auto_sender
                                         .send(primitive)
+                                        .await
                                         .map_err(|_| {
                                             IoError::new(
                                                 ErrorKind::ConnectionReset,
@@ -455,6 +467,7 @@ impl TestUser {
 
                                     let suspend_indication = auto_sender
                                         .send(primitive)
+                                        .await
                                         .map_err(|_| {
                                             IoError::new(
                                                 ErrorKind::ConnectionReset,
@@ -495,9 +508,10 @@ impl TestUser {
                                     }
                                 }
                             };
-                            let (sender, _recv) = bounded(0);
+                            let (sender, _recv) = oneshot::channel();
                             auto_sender
                                 .send(UserPrimitive::Put(request, sender))
+                                .await
                                 .expect("Unable to send auto request");
                         }
                         for response in responses {
@@ -551,16 +565,16 @@ impl TestUser {
                             // we should be able to connect to the socket we are running
                             // just fine. but we can ignore errors per
                             // CCSDS 727.0-B-5  § 6.2.5.1.2
-                            let (sender, _) = bounded(0);
-                            let _ =
-                                auto_sender
-                                    .send(UserPrimitive::Put(req, sender))
-                                    .map_err(|_| {
-                                        IoError::new(
-                                            ErrorKind::ConnectionReset,
-                                            "Daemon Half of User disconnected.",
-                                        )
-                                    });
+                            let (sender, _) = oneshot::channel();
+                            let _ = auto_sender
+                                .send(UserPrimitive::Put(req, sender))
+                                .await
+                                .map_err(|_| {
+                                    IoError::new(
+                                        ErrorKind::ConnectionReset,
+                                        "Daemon Half of User disconnected.",
+                                    )
+                                });
                         }
                     }
                     Indication::Report(report) => {
@@ -640,17 +654,18 @@ pub struct TestUserHalf {
 }
 impl TestUserHalf {
     #[allow(unused)]
-    pub fn put(&self, request: PutRequest) -> Result<TransactionID, IoError> {
-        let (put_send, put_recv) = bounded(1);
+    pub async fn put(&self, request: PutRequest) -> Result<TransactionID, IoError> {
+        let (put_send, mut put_recv) = oneshot::channel();
         let primitive = UserPrimitive::Put(request, put_send);
 
-        self.internal_tx.send(primitive).map_err(|_| {
+        self.internal_tx.send(primitive).await.map_err(|_| {
             IoError::new(
                 ErrorKind::ConnectionReset,
                 "Daemon Half of User disconnected.",
             )
         })?;
-        put_recv.recv().map_err(|_| {
+
+        put_recv.await.map_err(|_| {
             IoError::new(
                 ErrorKind::ConnectionReset,
                 "Daemon Half of User disconnected.",
@@ -661,9 +676,9 @@ impl TestUserHalf {
     // this function is actually used in series_f1 but series_f2 and f3 generate an unused warning
     // apparently related https://github.com/rust-lang/rust/issues/46379
     #[allow(unused)]
-    pub fn cancel(&self, transaction: TransactionID) -> Result<(), IoError> {
+    pub async fn cancel(&self, transaction: TransactionID) -> Result<(), IoError> {
         let primitive = UserPrimitive::Cancel(transaction);
-        self.internal_tx.send(primitive).map_err(|_| {
+        self.internal_tx.send(primitive).await.map_err(|_| {
             IoError::new(
                 ErrorKind::ConnectionReset,
                 "Daemon Half of User disconnected.",
@@ -672,17 +687,17 @@ impl TestUserHalf {
     }
 
     #[allow(unused)]
-    pub fn report(&self, transaction: TransactionID) -> Result<Option<Report>, IoError> {
-        let (report_tx, report_rx) = bounded(1);
+    pub async fn report(&self, transaction: TransactionID) -> Result<Option<Report>, IoError> {
+        let (report_tx, report_rx) = oneshot::channel();
         let primitive = UserPrimitive::Report(transaction, report_tx);
 
-        self.internal_tx.send(primitive).map_err(|err| {
+        self.internal_tx.send(primitive).await.map_err(|err| {
             IoError::new(
                 ErrorKind::ConnectionReset,
                 format!("Daemon Half of User disconnected on send: {err}"),
             )
         })?;
-        let response = match report_rx.recv() {
+        let response = match report_rx.await {
             Ok(report) => Some(report),
             // if the channel disconnects because the transaction is finished then just get from history.
             Err(_) => self.history.read().unwrap().get(&transaction).cloned(),
@@ -694,9 +709,9 @@ impl TestUserHalf {
 impl<'a, T> Drop for JoD<'a, T> {
     fn drop(&mut self) {
         self.signal.store(true, Ordering::Relaxed);
-        let handle = self.handle.remove(0);
+        let _handle = self.handle.remove(0);
 
-        handle.join().expect("Unable to join handle.");
+        //handle.join().expect("Unable to join handle.");
     }
 }
 
@@ -712,7 +727,7 @@ type DaemonType = (
 type Timeouts = [Option<i64>; 3];
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn create_daemons<T: FileStore + Sync + Send + 'static>(
+pub(crate) async fn create_daemons<T: FileStore + Sync + Send + 'static>(
     filestore: Arc<T>,
     local_transport_map: HashMap<Vec<EntityID>, Box<dyn PDUTransport + Send>>,
     remote_transport_map: HashMap<Vec<EntityID>, Box<dyn PDUTransport + Send>>,
@@ -757,15 +772,12 @@ pub(crate) fn create_daemons<T: FileStore + Sync + Send + 'static>(
         indication_tx,
     );
 
-    let local_handle = thread::Builder::new()
-        .name("Local Daemon".to_string())
-        .spawn(move || {
-            local_daemon
-                .manage_transactions()
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        })
-        .expect("Unable to spwan local.");
+    let local_handle = tokio::task::spawn(async move {
+        local_daemon
+            .manage_transactions()
+            .await
+            .map_err(|e| e.to_string())
+    });
 
     let remote_filestore = filestore;
     let remote_user = TestUser::new(remote_filestore.clone());
@@ -783,15 +795,12 @@ pub(crate) fn create_daemons<T: FileStore + Sync + Send + 'static>(
         remote_indication_tx,
     );
 
-    let remote_handle = thread::Builder::new()
-        .name("Remote Daemon".to_string())
-        .spawn(move || {
-            remote_daemon
-                .manage_transactions()
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        })
-        .expect("Unable to spawn remote.");
+    let remote_handle = tokio::task::spawn(async move {
+        remote_daemon
+            .manage_transactions()
+            .await
+            .map_err(|e| e.to_string())
+    });
 
     let _local_h = JoD::from((local_handle, signal.clone()));
     let _remote_h: JoD<_> = JoD::from((remote_handle, signal));
@@ -833,81 +842,92 @@ pub(crate) type EntityConstructorReturn = (
     JoD<'static, Result<(), String>>,
 );
 
+static ENTITIES: OnceCell<EntityConstructorReturn> = OnceCell::const_new();
+
 #[fixture]
-#[once]
-fn make_entities(
+async fn make_entities(
     tempdir_fixture: &TempDir,
     terminate: &Arc<AtomicBool>,
-) -> EntityConstructorReturn {
-    let remote_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind remote UDP.");
-    let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
+) -> &'static EntityConstructorReturn {
+    ENTITIES
+        .get_or_init(|| async {
+            let remote_udp = UdpSocket::bind("127.0.0.1:0")
+                .await
+                .expect("Unable to bind remote UDP.");
+            let remote_addr = remote_udp.local_addr().expect("Cannot find local address.");
 
-    let local_udp = UdpSocket::bind("127.0.0.1:0").expect("Unable to bind local UDP.");
-    let local_addr = local_udp.local_addr().expect("Cannot find local address.");
+            let local_udp = UdpSocket::bind("127.0.0.1:0")
+                .await
+                .expect("Unable to bind local UDP.");
+            let local_addr = local_udp.local_addr().expect("Cannot find local address.");
 
-    let entity_map = HashMap::from([
-        (EntityID::from(0_u16), local_addr),
-        (EntityID::from(1_u16), remote_addr),
-    ]);
+            let entity_map = HashMap::from([
+                (EntityID::from(0_u16), local_addr),
+                (EntityID::from(1_u16), remote_addr),
+            ]);
 
-    let local_transport = UdpTransport::try_from((local_udp, entity_map.clone()))
-        .expect("Unable to make Lossy Transport.");
-    let remote_transport =
-        UdpTransport::try_from((remote_udp, entity_map)).expect("Unable to make UdpTransport.");
+            let local_transport = UdpTransport::try_from((local_udp, entity_map.clone()))
+                .expect("Unable to make Lossy Transport.");
+            let remote_transport = UdpTransport::try_from((remote_udp, entity_map))
+                .expect("Unable to make UdpTransport.");
 
-    let remote_transport_map: HashMap<Vec<EntityID>, Box<dyn PDUTransport + Send>> =
-        HashMap::from([(
-            vec![EntityID::from(0_u16)],
-            Box::new(remote_transport) as Box<dyn PDUTransport + Send>,
-        )]);
+            let remote_transport_map: HashMap<Vec<EntityID>, Box<dyn PDUTransport + Send>> =
+                HashMap::from([(
+                    vec![EntityID::from(0_u16)],
+                    Box::new(remote_transport) as Box<dyn PDUTransport + Send>,
+                )]);
 
-    let local_transport_map: HashMap<Vec<EntityID>, Box<dyn PDUTransport + Send>> =
-        HashMap::from([(
-            vec![EntityID::from(1_u16)],
-            Box::new(local_transport) as Box<dyn PDUTransport + Send>,
-        )]);
+            let local_transport_map: HashMap<Vec<EntityID>, Box<dyn PDUTransport + Send>> =
+                HashMap::from([(
+                    vec![EntityID::from(1_u16)],
+                    Box::new(local_transport) as Box<dyn PDUTransport + Send>,
+                )]);
 
-    let utf8_path = Utf8PathBuf::from(
-        tempdir_fixture
-            .path()
-            .as_os_str()
-            .to_str()
-            .expect("Unable to coerce tmp path to String."),
-    );
+            let utf8_path = Utf8PathBuf::from(
+                tempdir_fixture
+                    .path()
+                    .as_os_str()
+                    .to_str()
+                    .expect("Unable to coerce tmp path to String."),
+            );
 
-    let filestore = Arc::new(NativeFileStore::new(&utf8_path));
-    filestore
-        .create_directory("local")
-        .expect("Unable to create local directory.");
-    filestore
-        .create_directory("remote")
-        .expect("Unable to create local directory.");
+            let filestore = Arc::new(NativeFileStore::new(&utf8_path));
+            filestore
+                .create_directory("local")
+                .expect("Unable to create local directory.");
+            filestore
+                .create_directory("remote")
+                .expect("Unable to create local directory.");
 
-    let data_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("data");
-    for filename in ["small.txt", "medium.txt", "large.txt"] {
-        fs::copy(
-            data_dir.join(filename),
-            utf8_path.join("local").join(filename),
-        )
-        .expect("Unable to copy file.");
-    }
-    let (local_user, remote_user, local_handle, remote_handle) = create_daemons(
-        filestore.clone(),
-        local_transport_map,
-        remote_transport_map,
-        terminate.clone(),
-        [None, None, None],
-    );
-    (
-        local_user,
-        remote_user,
-        filestore,
-        local_handle,
-        remote_handle,
-    )
+            let data_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("data");
+            for filename in ["small.txt", "medium.txt", "large.txt"] {
+                fs::copy(
+                    data_dir.join(filename),
+                    utf8_path.join("local").join(filename),
+                )
+                .expect("Unable to copy file.");
+            }
+            let (local_user, remote_user, local_handle, remote_handle) = create_daemons(
+                filestore.clone(),
+                local_transport_map,
+                remote_transport_map,
+                terminate.clone(),
+                [None, None, None],
+            )
+            .await;
+
+            (
+                local_user,
+                remote_user,
+                filestore,
+                local_handle,
+                remote_handle,
+            )
+        })
+        .await
 }
 
 pub(crate) type UsersAndFilestore = (
@@ -916,9 +936,11 @@ pub(crate) type UsersAndFilestore = (
     Arc<NativeFileStore>,
 );
 #[fixture]
-#[once]
-pub(crate) fn get_filestore(make_entities: &'static EntityConstructorReturn) -> UsersAndFilestore {
-    (&make_entities.0, &make_entities.1, make_entities.2.clone())
+pub(crate) async fn get_filestore(
+    make_entities: impl Future<Output = &'static EntityConstructorReturn>,
+) -> UsersAndFilestore {
+    let entities = make_entities.await;
+    (&entities.0, &entities.1, entities.2.clone())
 }
 
 #[allow(dead_code)]
@@ -948,15 +970,12 @@ pub(crate) struct LossyTransport {
 }
 impl LossyTransport {
     #[allow(dead_code)]
-    pub fn new<T: ToSocketAddrs>(
+    pub async fn new<T: ToSocketAddrs>(
         addr: T,
         entity_map: HashMap<VariableID, SocketAddr>,
         issue: TransportIssue,
     ) -> Result<Self, IoError> {
-        let socket = UdpSocket::bind(addr)?;
-        socket.set_read_timeout(Some(Duration::from_secs(1)))?;
-        socket.set_write_timeout(Some(Duration::from_secs(1)))?;
-        socket.set_nonblocking(true)?;
+        let socket = UdpSocket::bind(addr).await?;
         Ok(Self {
             socket,
             entity_map,
@@ -979,196 +998,195 @@ impl TryFrom<(UdpSocket, HashMap<VariableID, SocketAddr>, TransportIssue)> for L
             issue: inputs.2,
             buffer: vec![],
         };
-        me.socket.set_read_timeout(Some(Duration::from_secs(1)))?;
-        me.socket.set_write_timeout(Some(Duration::from_secs(1)))?;
-        me.socket.set_nonblocking(true)?;
         Ok(me)
     }
 }
+
+#[async_trait]
 impl PDUTransport for LossyTransport {
-    fn request(&mut self, destination: VariableID, pdu: PDU) -> Result<(), IoError> {
-        self.entity_map
+    async fn request(&mut self, destination: VariableID, pdu: PDU) -> Result<(), IoError> {
+        let addr = self
+            .entity_map
             .get(&destination)
-            .ok_or_else(|| IoError::from(ErrorKind::AddrNotAvailable))
-            .and_then(|addr| {
-                // send a delayed packet if there are any
-                if !self.buffer.is_empty() {
-                    let pdu = self.buffer.remove(0);
+            .ok_or_else(|| IoError::from(ErrorKind::AddrNotAvailable))?;
+
+        // send a delayed packet if there are any
+        if !self.buffer.is_empty() {
+            let pdu = self.buffer.remove(0);
+            self.socket
+                .send_to(pdu.encode().as_slice(), addr)
+                .await
+                .map(|_n| ())?;
+        }
+
+        match &self.issue {
+            TransportIssue::Rate(rate) => {
+                if self.counter % rate == 0 {
+                    self.counter += 1;
+                    Ok(())
+                } else {
+                    self.counter += 1;
                     self.socket
                         .send_to(pdu.encode().as_slice(), addr)
+                        .await
+                        .map(|_n| ())
+                }
+            }
+            TransportIssue::Duplicate(rate) => {
+                if self.counter % rate == 0 {
+                    self.counter += 1;
+                    self.socket
+                        .send_to(pdu.clone().encode().as_slice(), addr)
+                        .await
                         .map(|_n| ())?;
+                    self.socket
+                        .send_to(pdu.encode().as_slice(), addr)
+                        .await
+                        .map(|_n| ())
+                } else {
+                    self.counter += 1;
+                    self.socket
+                        .send_to(pdu.encode().as_slice(), addr)
+                        .await
+                        .map(|_n| ())
                 }
-                match &self.issue {
-                    TransportIssue::Rate(rate) => {
-                        if self.counter % rate == 0 {
-                            self.counter += 1;
-                            Ok(())
-                        } else {
-                            self.counter += 1;
-                            self.socket
-                                .send_to(pdu.encode().as_slice(), addr)
-                                .map(|_n| ())
-                        }
-                    }
-                    TransportIssue::Duplicate(rate) => {
-                        if self.counter % rate == 0 {
-                            self.counter += 1;
-                            self.socket
-                                .send_to(pdu.clone().encode().as_slice(), addr)
-                                .map(|_n| ())?;
-                            self.socket
-                                .send_to(pdu.encode().as_slice(), addr)
-                                .map(|_n| ())
-                        } else {
-                            self.counter += 1;
-                            self.socket
-                                .send_to(pdu.encode().as_slice(), addr)
-                                .map(|_n| ())
-                        }
-                    }
-                    TransportIssue::Reorder(rate) => {
-                        if self.counter % rate == 0 {
-                            self.counter += 1;
-                            self.buffer.push(pdu);
-                            Ok(())
-                        } else {
-                            self.counter += 1;
-                            self.socket
-                                .send_to(pdu.encode().as_slice(), addr)
-                                .map(|_n| ())
-                        }
-                    }
-                    TransportIssue::Once(skip_directive) => match &pdu.payload {
-                        PDUPayload::Directive(operation) => {
-                            if self.counter == 1 && operation.get_directive() == *skip_directive {
-                                self.counter += 1;
-                                Ok(())
-                            } else {
-                                if operation.get_directive() == *skip_directive {}
-                                self.socket
-                                    .send_to(pdu.encode().as_slice(), addr)
-                                    .map(|_n| ())
-                            }
-                        }
-                        PDUPayload::FileData(_data) => self
-                            .socket
+            }
+            TransportIssue::Reorder(rate) => {
+                if self.counter % rate == 0 {
+                    self.counter += 1;
+                    self.buffer.push(pdu);
+                    Ok(())
+                } else {
+                    self.counter += 1;
+                    self.socket
+                        .send_to(pdu.encode().as_slice(), addr)
+                        .await
+                        .map(|_n| ())
+                }
+            }
+            TransportIssue::Once(skip_directive) => match &pdu.payload {
+                PDUPayload::Directive(operation) => {
+                    if self.counter == 1 && operation.get_directive() == *skip_directive {
+                        self.counter += 1;
+                        Ok(())
+                    } else {
+                        if operation.get_directive() == *skip_directive {}
+                        self.socket
                             .send_to(pdu.encode().as_slice(), addr)
-                            .map(|_n| ()),
-                    },
-                    TransportIssue::All(skip_directive) => match &pdu.payload {
-                        PDUPayload::Directive(operation) => {
-                            if skip_directive.contains(&operation.get_directive()) {
-                                Ok(())
-                            } else {
-                                self.socket
-                                    .send_to(pdu.encode().as_slice(), addr)
-                                    .map(|_n| ())
-                            }
-                        }
-                        PDUPayload::FileData(_data) => self
-                            .socket
-                            .send_to(pdu.encode().as_slice(), addr)
-                            .map(|_n| ()),
-                    },
-                    // only drop the PDUs if we have not yet send EoF.
-                    // Flip the counter on EoF to signify we can send again.
-                    TransportIssue::Every => match &pdu.payload {
-                        PDUPayload::Directive(operation) => {
-                            match (self.counter, operation.get_directive()) {
-                                (1, PDUDirective::EoF) => {
-                                    self.counter += 1;
-                                    self.socket
-                                        .send_to(pdu.encode().as_slice(), addr)
-                                        .map(|_n| ())
-                                }
-                                (1, PDUDirective::Ack) => {
-                                    self.counter += 1;
-                                    // increment counter but still don't send it
-                                    Ok(())
-                                }
-                                (1, _) => Ok(()),
-                                (_, _) => self
-                                    .socket
-                                    .send_to(pdu.encode().as_slice(), addr)
-                                    .map(|_n| ()),
-                            }
-                        }
-                        PDUPayload::FileData(_data) => {
-                            if self.counter == 1 {
-                                Ok(())
-                            } else {
-                                self.socket
-                                    .send_to(pdu.encode().as_slice(), addr)
-                                    .map(|_n| ())
-                            }
-                        }
-                    },
-                    TransportIssue::Inactivity => {
-                        // Send the Metadata PDU only, and nothing else.
-                        if self.counter == 1 {
-                            self.counter += 1;
-                            self.socket
-                                .send_to(pdu.encode().as_slice(), addr)
-                                .map(|_n| ())
-                        } else {
-                            Ok(())
-                        }
+                            .await
+                            .map(|_n| ())
                     }
                 }
-            })
+                PDUPayload::FileData(_data) => self
+                    .socket
+                    .send_to(pdu.encode().as_slice(), addr)
+                    .await
+                    .map(|_n| ()),
+            },
+            TransportIssue::All(skip_directive) => match &pdu.payload {
+                PDUPayload::Directive(operation) => {
+                    if skip_directive.contains(&operation.get_directive()) {
+                        Ok(())
+                    } else {
+                        self.socket
+                            .send_to(pdu.encode().as_slice(), addr)
+                            .await
+                            .map(|_n| ())
+                    }
+                }
+                PDUPayload::FileData(_data) => self
+                    .socket
+                    .send_to(pdu.encode().as_slice(), addr)
+                    .await
+                    .map(|_n| ()),
+            },
+            // only drop the PDUs if we have not yet send EoF.
+            // Flip the counter on EoF to signify we can send again.
+            TransportIssue::Every => match &pdu.payload {
+                PDUPayload::Directive(operation) => {
+                    match (self.counter, operation.get_directive()) {
+                        (1, PDUDirective::EoF) => {
+                            self.counter += 1;
+                            self.socket
+                                .send_to(pdu.encode().as_slice(), addr)
+                                .await
+                                .map(|_n| ())
+                        }
+                        (1, PDUDirective::Ack) => {
+                            self.counter += 1;
+                            // increment counter but still don't send it
+                            Ok(())
+                        }
+                        (1, _) => Ok(()),
+                        (_, _) => self
+                            .socket
+                            .send_to(pdu.encode().as_slice(), addr)
+                            .await
+                            .map(|_n| ()),
+                    }
+                }
+                PDUPayload::FileData(_data) => {
+                    if self.counter == 1 {
+                        Ok(())
+                    } else {
+                        self.socket
+                            .send_to(pdu.encode().as_slice(), addr)
+                            .await
+                            .map(|_n| ())
+                    }
+                }
+            },
+            TransportIssue::Inactivity => {
+                // Send the Metadata PDU only, and nothing else.
+                if self.counter == 1 {
+                    self.counter += 1;
+                    self.socket
+                        .send_to(pdu.encode().as_slice(), addr)
+                        .await
+                        .map(|_n| ())
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
 
-    fn pdu_handler(
+    async fn pdu_handler(
         &mut self,
         signal: Arc<AtomicBool>,
         sender: Sender<PDU>,
-        recv: Receiver<(VariableID, PDU)>,
+        mut recv: Receiver<(VariableID, PDU)>,
     ) -> Result<(), IoError> {
         // this buffer will be 511 KiB, should be sufficiently small;
         let mut buffer = vec![0_u8; u16::MAX as usize];
         while !signal.load(Ordering::Relaxed) {
-            match self.socket.recv_from(&mut buffer) {
-                Ok(_n) => match PDU::decode(&mut buffer.as_slice()) {
-                    Ok(pdu) => {
-                        match sender.send(pdu) {
-                            Ok(()) => {}
-                            Err(error) => {
-                                error!("Transport found disconnect sending channel: {error}");
-                                return Err(IoError::from(ErrorKind::ConnectionAborted));
-                            }
-                        };
-                        continue;
-                    }
-                    Err(error) => {
-                        error!("Error decoding PDU: {error}");
-                        // might need to stop depending on the error.
-                        // some are recoverable though
+            tokio::select! {
+                Ok((_n, _addr)) = self.socket.recv_from(&mut buffer) => {
+                    match PDU::decode(&mut buffer.as_slice()) {
+                        Ok(pdu) => {
+                            match sender.send(pdu).await {
+                                Ok(()) => {}
+                                Err(error) => {
+                                    error!("Channel to daemon severed: {}", error);
+                                    return Err(IoError::from(ErrorKind::ConnectionAborted));
+                                }
+                            };
+                        }
+                        Err(error) => {
+                            error!("Error decoding PDU: {}", error);
+                            // might need to stop depending on the error.
+                            // some are recoverable though
+                        }
                     }
                 },
-                Err(ref e)
-                    if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut =>
-                {
-                    // continue to trying to send
+                Some((entity, pdu)) = recv.recv() => {
+                    self.request(entity, pdu).await?;
+                },
+                else => {
+                    log::info!("UdpSocket or Channel disconnected");
+                    break
                 }
-                Err(e) => {
-                    error!("encountered IO error: {e}");
-                    return Err(e);
-                }
-            };
-            match recv.try_recv() {
-                Ok((entity, pdu)) => {
-                    self.request(entity, pdu)?;
-                    continue;
-                }
-                Err(crossbeam_channel::TryRecvError::Empty) => {
-                    // nothing to do here
-                }
-                Err(err @ crossbeam_channel::TryRecvError::Disconnected) => {
-                    error!("Transport found disconnected channel: {err}");
-                    return Err(IoError::from(ErrorKind::ConnectionAborted));
-                }
-            };
-            thread::sleep(Duration::from_millis(10))
+            }
         }
         Ok(())
     }
