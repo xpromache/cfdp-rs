@@ -1,7 +1,4 @@
-use std::{
-    thread,
-    time::Duration,
-};
+use std::{thread, time::Duration};
 
 use camino::Utf8PathBuf;
 use cfdp_core::{
