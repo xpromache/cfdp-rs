@@ -415,8 +415,8 @@ impl<T: FileStore + Send + Sync + 'static> Daemon<T> {
         let handle = tokio::task::spawn(async move {
             transaction.send_report(None)?;
 
-            let timeout = transaction.until_timeout();
             while transaction.get_state() != TransactionState::Terminated {
+                let timeout = transaction.until_timeout();
                 select! {
                     permit = transport_tx.reserve(), if transaction.has_pdu_to_send() => {
                         if let Ok(permit) = permit {
