@@ -743,7 +743,7 @@ impl<T: FileStore + Send + Sync + 'static> Daemon<T> {
                                     // but before the channel is cleaned up.
                                     // for now ignore errors until a better solution is found.
                                     // maybe possible to trigger a cleanup immediately after a transaction finishes?
-                                    let _ = channel.send(Command::Report(report_sender));
+                                    let _ = channel.send(Command::Report(report_sender)).await;
                                 }
                             }
                         };
