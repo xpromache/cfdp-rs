@@ -50,6 +50,7 @@ fn f3s01(get_filestore: &UsersAndFilestore) {
                     ProxyOperation::ProxyTransmissionMode(TransmissionMode::Acknowledged),
                 )),
             ],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -86,6 +87,7 @@ fn f3s02(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -122,6 +124,7 @@ fn f3s03(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -142,6 +145,7 @@ fn f3s03(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
     while local_user
@@ -196,6 +200,7 @@ fn f3s04(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -216,6 +221,7 @@ fn f3s04(get_filestore: &UsersAndFilestore) {
                 second_filename: new_file,
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -282,6 +288,7 @@ fn f3s05(get_filestore: &UsersAndFilestore) {
                 },
             ],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -341,14 +348,7 @@ fn f3s06(get_filestore: &UsersAndFilestore) {
     let path_to_new = filestore.get_native_path(&new_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "/local/small.txt".into(),
-            destination_filename: out_file.clone(),
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("/local/small.txt".into(),out_file.clone() ,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -368,6 +368,7 @@ fn f3s06(get_filestore: &UsersAndFilestore) {
                 second_filename: new_file.clone(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -435,6 +436,7 @@ fn f3s07(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -474,6 +476,7 @@ fn f3s08(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -496,6 +499,7 @@ fn f3s08(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -530,6 +534,7 @@ fn f3s09(get_filestore: &UsersAndFilestore) {
             transmission_mode: TransmissionMode::Acknowledged,
             filestore_requests: vec![],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -552,6 +557,7 @@ fn f3s09(get_filestore: &UsersAndFilestore) {
                 second_filename: "".into(),
             }],
             message_to_user: vec![],
+            tailing: false,
         })
         .expect("unable to send put request.");
 
@@ -591,6 +597,7 @@ fn f3s10(get_filestore: &UsersAndFilestore) {
                     directory_filename: "/local/remote.listing".into(),
                 }),
             ))],
+            tailing: false,
         })
         .expect("unable to send put request.");
 

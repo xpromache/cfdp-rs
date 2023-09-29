@@ -81,6 +81,7 @@ fn proxy_req(#[values(true, false)] use_mode: bool) {
                 .encode(),
             },
         ],
+        tailing: false,
     };
     assert_eq!(1, recovered.len());
     assert_eq!(expected, recovered[0])
@@ -139,6 +140,7 @@ fn categorize_user_message() {
                 },
             )),
         ],
+        tailing: false,
     }];
 
     let requests = vec![

@@ -4,7 +4,7 @@ use camino::Utf8PathBuf;
 use cfdp_core::{
     daemon::PutRequest,
     filestore::FileStore,
-    pdu::{Condition, EntityID, PDUDirective, TransmissionMode},
+    pdu::{Condition, EntityID, PDUDirective},
 };
 use rstest::{fixture, rstest};
 
@@ -40,14 +40,8 @@ fn f2s01(fixture_f2s01: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),
+            out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -85,14 +79,9 @@ fn f2s02(fixture_f2s02: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),
+            out_file,
+            EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -130,14 +119,8 @@ fn f2s03(fixture_f2s03: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),out_file,
+            EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -175,14 +158,8 @@ fn f2s04(fixture_f2s04: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),out_file,
+            EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -220,14 +197,8 @@ fn f2s05(fixture_f2s05: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),
+            out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -265,14 +236,7 @@ fn f2s06(fixture_f2s06: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -313,14 +277,7 @@ fn f2s07(fixture_f2s07: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     let id = local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {
@@ -373,14 +330,7 @@ fn f2s08(fixture_f2s08: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     let id = local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(), out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     // wait long enough for the nak limit to be reached
@@ -430,14 +380,7 @@ fn f2s09(fixture_f2s09: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     let id = local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     // wait long enough for the nak limit to be reached
@@ -488,14 +431,7 @@ fn f2s10(fixture_f2s10: &'static EntityConstructorReturn) {
     let path_to_out = filestore.get_native_path(&out_file);
 
     let id = local_user
-        .put(PutRequest {
-            source_filename: "local/medium.txt".into(),
-            destination_filename: out_file,
-            destination_entity_id: EntityID::from(1_u16),
-            transmission_mode: TransmissionMode::Acknowledged,
-            filestore_requests: vec![],
-            message_to_user: vec![],
-        })
+        .put(PutRequest::new_ack("local/medium.txt".into(),out_file,EntityID::from(1_u16)))
         .expect("unable to send put request.");
 
     // wait long enough for the nak limit to be reached

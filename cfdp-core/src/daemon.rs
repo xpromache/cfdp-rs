@@ -82,6 +82,31 @@ pub struct PutRequest {
     pub filestore_requests: Vec<FileStoreRequest>,
     /// Any Messages to user received either from the metadataPDU or as input
     pub message_to_user: Vec<MessageToUser>,
+    /// If the file should be sent in tailing mode
+    pub tailing: bool
+}
+
+impl PutRequest {
+    /// create a default Acknowledged put request
+    pub fn new_ack(source_filename: Utf8PathBuf, destination_filename: Utf8PathBuf, destination_entity_id: EntityID) -> Self {
+        PutRequest {
+            source_filename, destination_filename, destination_entity_id,
+            transmission_mode: TransmissionMode::Acknowledged,
+            filestore_requests: vec![],
+            message_to_user: vec![],
+            tailing: false, 
+        }
+    }
+    /// create a default Unacknowledged put request
+    pub fn new_unack(source_filename: Utf8PathBuf, destination_filename: Utf8PathBuf, destination_entity_id: EntityID) -> Self {
+        PutRequest {
+            source_filename, destination_filename, destination_entity_id,
+            transmission_mode: TransmissionMode::Unacknowledged,
+            filestore_requests: vec![],
+            message_to_user: vec![],
+            tailing: false, 
+        }
+    }
 }
 
 fn construct_metadata(req: PutRequest, config: EntityConfig, file_size: u64) -> Metadata {
@@ -421,6 +446,7 @@ impl<T: FileStore + Send + Sync + 'static> Daemon<T> {
             inactivity_timeout: entity_config.inactivity_timeout,
             ack_timeout: entity_config.ack_timeout,
             nak_timeout: entity_config.nak_timeout,
+            tailing: false
         };
         /*  let name = format!(
             "({}, {})",
@@ -514,6 +540,7 @@ impl<T: FileStore + Send + Sync + 'static> Daemon<T> {
             inactivity_timeout: entity_config.inactivity_timeout,
             ack_timeout: entity_config.ack_timeout,
             nak_timeout: entity_config.nak_timeout,
+            tailing: request.tailing
         };
         let mut metadata = construct_metadata(request, entity_config, 0_u64);
 

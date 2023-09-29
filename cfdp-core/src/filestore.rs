@@ -122,7 +122,7 @@ pub trait FileStore {
     /// Opens a system temporary file
     fn open_tempfile(&self) -> FileStoreResult<File>;
 
-    /// Retuns the size of the file on disk relative to the root path.
+    /// Returns the size of the file on disk relative to the root path.
     fn get_size<P: AsRef<Utf8Path>>(&self, path: P) -> FileStoreResult<u64>;
 
     /// Executes an action based on an input filestore request

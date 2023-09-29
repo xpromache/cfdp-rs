@@ -113,6 +113,7 @@ pub(crate) fn get_proxy_request(
             transmission_mode,
             filestore_requests,
             message_to_user,
+            tailing: false,
         };
         out.push(req)
     }
@@ -311,6 +312,7 @@ impl TestUser {
                                                     ),
                                                 )),
                                             ],
+                                            tailing: false,
                                         }
                                     }
                                     Err(_) => PutRequest {
@@ -339,8 +341,9 @@ impl TestUser {
                                                             .directory_filename,
                                                     },
                                                 ),
-                                            )),
+                                            )),                                            
                                         ],
+                                        tailing: false,
                                     },
                                 },
                                 UserRequest::RemoteStatusReport(report_request) => {
@@ -408,6 +411,7 @@ impl TestUser {
                                                 UserResponse::RemoteStatusReport(response),
                                             )),
                                         ],
+                                        tailing: false,
                                     }
                                 }
                                 UserRequest::RemoteSuspend(suspend_req) => {
@@ -456,6 +460,7 @@ impl TestUser {
                                                 ),
                                             )),
                                         ],
+                                        tailing: false,
                                     }
                                 }
                                 UserRequest::RemoteResume(resume_request) => {
@@ -504,6 +509,7 @@ impl TestUser {
                                                 ),
                                             )),
                                         ],
+                                        tailing: false,
                                     }
                                 }
                             };
@@ -560,6 +566,7 @@ impl TestUser {
                                 transmission_mode: TransmissionMode::Unacknowledged,
                                 filestore_requests: vec![],
                                 message_to_user,
+                                tailing: false,                                
                             };
                             // we should be able to connect to the socket we are running
                             // just fine. but we can ignore errors per

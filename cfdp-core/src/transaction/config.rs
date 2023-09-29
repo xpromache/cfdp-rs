@@ -87,6 +87,10 @@ pub struct TransactionConfig {
     pub nak_timeout: i64,
     /// Maximum amount timeof without activity before the ACK [Timer] increments its count.
     pub ack_timeout: i64,
+    /// This is only used for send transactions. 
+    /// If set to true, the file is open in tailing mode - that means the sender polls
+    /// regularly for new data. When the file is removed from disk then it is considered complete.
+    pub tailing: bool,
 }
 
 #[cfg(test)]
@@ -114,6 +118,7 @@ pub(crate) mod test {
             inactivity_timeout: 300_i64,
             ack_timeout: 300_i64,
             nak_timeout: 300_i64,
+            tailing: false
         }
     }
 }

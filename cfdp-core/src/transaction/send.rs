@@ -158,7 +158,13 @@ impl<T: FileStore> SendTransaction<T> {
     pub(crate) fn until_timeout(&self) -> Duration {
         match self.send_state {
             SendState::SendEof | SendState::Cancelled => self.timer.until_timeout(),
-            _ => Duration::MAX,
+            _ => {
+                if self.config.tailing {
+                    Duration::from_millis(1000)
+                } else {
+                    Duration::MAX
+                }
+            }
         }
     }
 
@@ -187,10 +193,7 @@ impl<T: FileStore> SendTransaction<T> {
                         self.send_file_segment(None, None, permit)?
                     }
 
-                    let handle = self.get_handle()?;
-                    if handle.stream_position().map_err(FileStoreError::IO)?
-                        == handle.metadata().map_err(FileStoreError::IO)?.len()
-                    {
+                    if self.is_data_finished()? {
                         self.prepare_eof(None)?;
                         self.send_state = SendState::SendEof;
                     }
@@ -393,8 +396,6 @@ impl<T: FileStore> SendTransaction<T> {
         // if no offset given read from current cursor position
         let offset = offset.unwrap_or(handle.stream_position().map_err(FileStoreError::IO)?);
 
-        // If the offset is not provided start at the current position
-
         handle
             .seek(SeekFrom::Start(offset))
             .map_err(FileStoreError::IO)?;
@@ -423,6 +424,11 @@ impl<T: FileStore> SendTransaction<T> {
         permit: Permit<(VariableID, PDU)>,
     ) -> TransactionResult<()> {
         let (offset, file_data) = self.get_file_segment(offset, length)?;
+
+        if file_data.is_empty() {
+            //may happen for tailing transfers if there is no new data
+            return Ok(());
+        }
 
         let (data, segmentation_control) = match self.config.segment_metadata_flag {
             SegmentedData::NotPresent => (
@@ -930,6 +936,21 @@ impl<T: FileStore> SendTransaction<T> {
     fn send_indication(&self, indication: Indication) {
         let tx = self.indication_tx.clone();
         tokio::task::spawn(async move { tx.send(indication).await });
+    }
+    fn is_data_finished(&mut self) -> TransactionResult<bool> {
+        let tailing = self.config.tailing;
+
+        let handle = self.get_handle()?;
+        let finished = if  tailing {
+            let fname = &self.metadata.source_filename;
+            //todo have a better way to check if the file exists
+            self.filestore.get_size(fname).is_ok()
+        } else {
+            handle.stream_position().map_err(FileStoreError::IO)?
+                == handle.metadata().map_err(FileStoreError::IO)?.len()
+        };
+        
+        Ok(finished)
     }
 }
 
