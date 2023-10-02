@@ -67,6 +67,8 @@ pub enum FileStoreError {
     PathDiff(String, String),
     #[error("Error converting string from UTF-8: {0:}")]
     UTF8(#[from] Utf8Error),
+    #[error("File shrunk while sending")]
+    FileShrunk,
 }
 
 /// Defines any necessary actions a CFDP File Store implementation

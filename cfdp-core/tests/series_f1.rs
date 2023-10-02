@@ -435,7 +435,7 @@ fn f1s10(get_filestore: &UsersAndFilestore) {
         .put(PutRequest::new_ack(
             "local/large.txt".into(),
             out_file,
-            EntityID::from(1_u16)
+            EntityID::from(1_u16),
         ))
         .expect("unable to send put request.");
 

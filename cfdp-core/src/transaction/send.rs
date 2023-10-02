@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::sync::{
     mpsc::{Permit, Sender},
     oneshot,
@@ -58,7 +58,13 @@ pub struct SendTransaction<T: FileStore> {
     naks: VecDeque<SegmentRequestForm>,
     ///  The metadata of this Transaction
     pub(crate) metadata: Metadata,
+    /// Measurement of how large of a file has been sent so far
+    sent_file_size: u64,
+    /// the size of the file that will be sent in the. For tailing transfers, the size keeps increasing
+    /// for other transfers this is the same as metadata.file_size
+    file_size: u64,
     /// Measurement of how large of a file has been received so far
+    /// according to the last received KeepAlive PDUs
     received_file_size: u64,
     /// a cache of the header used for interactions in this transmission
     header: Option<PDUHeader>,
@@ -107,6 +113,8 @@ impl<T: FileStore> SendTransaction<T> {
         indication_tx: Sender<Indication>,
     ) -> TransactionResult<Self> {
         let received_file_size = 0_u64;
+        let sent_file_size = 0_u64;
+        let file_size = metadata.file_size;
         let timer = Timer::new(
             config.inactivity_timeout,
             config.max_count,
@@ -123,6 +131,8 @@ impl<T: FileStore> SendTransaction<T> {
             file_handle: None,
             naks: VecDeque::new(),
             metadata,
+            file_size,
+            sent_file_size,
             received_file_size,
             header: None,
             condition: Condition::NoError,
@@ -145,7 +155,14 @@ impl<T: FileStore> SendTransaction<T> {
     pub(crate) fn has_pdu_to_send(&self) -> bool {
         self.prompt.is_some()
             || match self.send_state {
-                SendState::SendMetadata | SendState::SendData => true,
+                SendState::SendMetadata => true,
+                SendState::SendData => {
+                    if self.config.tailing {
+                        self.sent_file_size < self.file_size
+                    } else {
+                        true
+                    }
+                }
                 SendState::SendEof => {
                     !self.naks.is_empty() || self.eof.as_ref().map_or(false, |x| x.1)
                 }
@@ -193,7 +210,7 @@ impl<T: FileStore> SendTransaction<T> {
                         self.send_file_segment(None, None, permit)?
                     }
 
-                    if self.is_data_finished()? {
+                    if self.check_data_finished()? {
                         self.prepare_eof(None)?;
                         self.send_state = SendState::SendEof;
                     }
@@ -262,6 +279,12 @@ impl<T: FileStore> SendTransaction<T> {
                     } else {
                         self.set_eof_flag(true);
                     }
+                }
+            }
+            SendState::SendData => {
+                if self.config.tailing && self.check_data_finished()? {
+                    self.prepare_eof(None)?;
+                    self.send_state = SendState::SendEof;
                 }
             }
             _ => {}
@@ -429,6 +452,10 @@ impl<T: FileStore> SendTransaction<T> {
             //may happen for tailing transfers if there is no new data
             return Ok(());
         }
+        let end_offset = offset + file_data.len() as u64;
+        if end_offset > self.sent_file_size {
+            self.sent_file_size = end_offset;
+        }
 
         let (data, segmentation_control) = match self.config.segment_metadata_flag {
             SegmentedData::NotPresent => (
@@ -498,7 +525,7 @@ impl<T: FileStore> SendTransaction<T> {
             EndOfFile {
                 condition: self.condition,
                 checksum: self.get_checksum()?,
-                file_size: self.metadata.file_size,
+                file_size: self.file_size,
                 fault_location,
             },
             true,
@@ -937,19 +964,39 @@ impl<T: FileStore> SendTransaction<T> {
         let tx = self.indication_tx.clone();
         tokio::task::spawn(async move { tx.send(indication).await });
     }
-    fn is_data_finished(&mut self) -> TransactionResult<bool> {
+
+    fn check_data_finished(&mut self) -> TransactionResult<bool> {
         let tailing = self.config.tailing;
 
-        let handle = self.get_handle()?;
-        let finished = if  tailing {
-            let fname = &self.metadata.source_filename;
-            //todo have a better way to check if the file exists
-            self.filestore.get_size(fname).is_ok()
+        let file_size = self
+            .get_handle()?
+            .metadata()
+            .map_err(FileStoreError::IO)?
+            .len();
+        if file_size < self.file_size {
+            warn!(
+                "File shrunk during send; old_size: {}, new_size: {}",
+                self.file_size, file_size
+            );
+            return Err(TransactionError::FileStore(Box::new(
+                FileStoreError::FileShrunk,
+            )));
         } else {
-            handle.stream_position().map_err(FileStoreError::IO)?
-                == handle.metadata().map_err(FileStoreError::IO)?.len()
-        };
-        
+            self.file_size = file_size;
+        }
+
+        let read_pos = self
+            .get_handle()?
+            .stream_position()
+            .map_err(FileStoreError::IO)?;
+
+        let finished = read_pos == file_size
+            && (!tailing
+                || self
+                    .filestore
+                    .get_size(&self.metadata.source_filename)
+                    .is_err()); //TODO find another way to see if the file has disappeared
+
         Ok(finished)
     }
 }

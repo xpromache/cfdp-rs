@@ -26,9 +26,9 @@ use crate::{
     filestore::{FileChecksum, FileStore, FileStoreError},
     pdu::{
         ACKSubDirective, Condition, DeliveryCode, Direction, FaultHandlerAction, FileDataPDU,
-        FileStatusCode, FileStoreResponse, Finished, KeepAlivePDU, MetadataTLV, NakOrKeepAlive,
-        NegativeAcknowledgmentPDU, Operations, PDUDirective, PDUHeader, PDUPayload, PDUType,
-        PositiveAcknowledgePDU, PromptPDU, SegmentRequestForm, SegmentationControl,
+        FileStatusCode, FileStoreResponse, Finished, KeepAlivePDU, MetadataPDU, MetadataTLV,
+        NakOrKeepAlive, NegativeAcknowledgmentPDU, Operations, PDUDirective, PDUHeader, PDUPayload,
+        PDUType, PositiveAcknowledgePDU, PromptPDU, SegmentRequestForm, SegmentationControl,
         TransactionStatus, TransmissionMode, VariableID, PDU, U3,
     },
     segments::Segments,
@@ -238,6 +238,10 @@ impl<T: FileStore> RecvTransaction<T> {
             if self.recv_state == RecvState::Cancelled {
                 warn!("Transaction {} inactivity timeout limit reached in Cancelled state, abandoning", self.id());
                 self.abandon();
+            } else if self.is_unbounded_file_transfer() {
+                //FIXME maybe we should have a very long inactivity instead because if the sender
+                // restarts we will be stuck forever with these
+                self.timer.restart_inactivity();
             } else {
                 self.handle_fault(Condition::InactivityDetected)?;
             }
@@ -393,19 +397,54 @@ impl<T: FileStore> RecvTransaction<T> {
     pub fn id(&self) -> TransactionID {
         TransactionID(self.config.source_entity_id, self.config.sequence_number)
     }
-    fn initialize_tempfile(&mut self) -> TransactionResult<()> {
-        self.file_handle = Some(self.filestore.open_tempfile()?);
-        Ok(())
-    }
 
     fn get_handle(&mut self) -> TransactionResult<&mut File> {
         let id = self.id();
         if self.file_handle.is_none() {
-            self.initialize_tempfile()?
+            let handle = match self.metadata.as_ref() {
+                //write data into a temporary file until the metadata is received
+                None => self.filestore.open_tempfile()?,
+                Some(meta) => self.filestore.open(
+                    meta.destination_filename.clone(),
+                    File::options()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .read(true),
+                )?,
+            };
+
+            self.file_handle = Some(handle);
         };
+
         self.file_handle
             .as_mut()
             .ok_or(TransactionError::NoFile(id))
+    }
+
+    /// called when metadata is received;
+    /// if the data was being stored in a temporary file, move it to the final file
+    fn move_file_data(&mut self) -> TransactionResult<()> {
+        let id = self.id();
+        let Some(handle) = self.file_handle.as_mut() else {
+            return Ok(());
+        };
+
+        let mut outfile = self.filestore.open(
+            self.metadata
+                .as_ref()
+                .map(|meta| meta.destination_filename.clone())
+                .ok_or(TransactionError::NoFile(id))?,
+            File::options().create(true).write(true).truncate(true),
+        )?;
+
+        // rewind to the beginning of the file.
+        // this might not be necessary with the io call that follows
+        handle.rewind().map_err(FileStoreError::IO)?;
+        io::copy(handle, &mut outfile).map_err(FileStoreError::IO)?;
+
+        self.file_handle.replace(outfile);
+        Ok(())
     }
 
     fn is_file_transfer(&self) -> bool {
@@ -413,6 +452,14 @@ impl<T: FileStore> RecvTransaction<T> {
             .as_ref()
             .map(|meta| !meta.source_filename.as_os_str().is_empty())
             .unwrap_or(false)
+    }
+
+    fn is_unbounded_file_transfer(&self) -> bool {
+        if let Some(meta) = self.metadata.as_ref() {
+            !meta.source_filename.as_os_str().is_empty() && meta.file_size == 0
+        } else {
+            false
+        }
     }
 
     fn store_file_data(&mut self, pdu: FileDataPDU) -> TransactionResult<(u64, usize)> {
@@ -446,23 +493,7 @@ impl<T: FileStore> RecvTransaction<T> {
     }
 
     fn finalize_file(&mut self) -> TransactionResult<FileStatusCode> {
-        let id = self.id();
-        {
-            let mut outfile = self.filestore.open(
-                self.metadata
-                    .as_ref()
-                    .map(|meta| meta.destination_filename.clone())
-                    .ok_or(TransactionError::NoFile(id))?,
-                File::options().create(true).write(true).truncate(true),
-            )?;
-            let handle = self.get_handle()?;
-            // rewind to the beginning of the file.
-            // this might not be necessary with the io call that follows
-            handle.rewind().map_err(FileStoreError::IO)?;
-            io::copy(handle, &mut outfile).map_err(FileStoreError::IO)?;
-            outfile.sync_all().map_err(FileStoreError::IO)?;
-        }
-        // Drop the temporary file
+        // this will close the file
         self.file_handle = None;
 
         Ok(FileStatusCode::Retained)
@@ -774,6 +805,7 @@ impl<T: FileStore> RecvTransaction<T> {
         {
             return Ok(());
         }
+
         // Only perform the Filestore requests if the Copy was successful
         self.filestore_response = {
             let mut fail_rest = false;
@@ -794,6 +826,7 @@ impl<T: FileStore> RecvTransaction<T> {
             }
             out
         };
+
         // send indication this transaction is finished.
         self.send_indication(Indication::Finished(FinishedIndication {
             id: self.id(),
@@ -929,52 +962,7 @@ impl<T: FileStore> RecvTransaction<T> {
                                     ))
                                 }
                             }
-                            Operations::Metadata(metadata) => {
-                                if self.metadata.is_none() {
-                                    debug!("Transaction {0} received Metadata.", self.id());
-                                    let message_to_user =
-                                        metadata.options.iter().filter_map(|op| match op {
-                                            MetadataTLV::MessageToUser(req) => Some(req.clone()),
-                                            _ => None,
-                                        });
-                                    // push each request up to the Daemon
-                                    let source_filename: Utf8PathBuf = metadata.source_filename;
-                                    let destination_filename: Utf8PathBuf =
-                                        metadata.destination_filename;
-
-                                    self.send_indication(Indication::MetadataRecv(
-                                        MetadataRecvIndication {
-                                            id: self.id(),
-                                            source_filename: source_filename.clone(),
-                                            destination_filename: destination_filename.clone(),
-                                            file_size: metadata.file_size,
-                                            transmission_mode: self.config.transmission_mode,
-                                            user_messages: message_to_user.clone().collect(),
-                                        },
-                                    ));
-
-                                    self.metadata = Some(Metadata {
-                                        source_filename,
-                                        destination_filename,
-                                        file_size: metadata.file_size,
-                                        checksum_type: metadata.checksum_type,
-                                        closure_requested: metadata.closure_requested,
-                                        filestore_requests: metadata
-                                            .options
-                                            .iter()
-                                            .filter_map(|op| match op {
-                                                MetadataTLV::FileStoreRequest(req) => {
-                                                    Some(req.clone())
-                                                }
-                                                _ => None,
-                                            })
-                                            .collect(),
-                                        message_to_user: message_to_user.collect(),
-                                    });
-                                    self.check_finished()?;
-                                }
-                                Ok(())
-                            }
+                            Operations::Metadata(metadata) => self.process_metadata(metadata),
                             Operations::Nak(_nak) => Err(TransactionError::UnexpectedPDU(
                                 self.config.sequence_number,
                                 self.config.transmission_mode,
@@ -1065,50 +1053,7 @@ impl<T: FileStore> RecvTransaction<T> {
                                 }
                                 Ok(())
                             }
-                            Operations::Metadata(metadata) => {
-                                if self.metadata.is_none() {
-                                    let message_to_user =
-                                        metadata.options.iter().filter_map(|op| match op {
-                                            MetadataTLV::MessageToUser(req) => Some(req.clone()),
-                                            _ => None,
-                                        });
-
-                                    let source_filename: Utf8PathBuf = metadata.source_filename;
-                                    let destination_filename: Utf8PathBuf =
-                                        metadata.destination_filename;
-
-                                    self.send_indication(Indication::MetadataRecv(
-                                        MetadataRecvIndication {
-                                            id: self.id(),
-                                            source_filename: source_filename.clone(),
-                                            destination_filename: destination_filename.clone(),
-                                            file_size: metadata.file_size,
-                                            transmission_mode: self.config.transmission_mode,
-                                            user_messages: message_to_user.clone().collect(),
-                                        },
-                                    ));
-
-                                    self.metadata = Some(Metadata {
-                                        source_filename,
-                                        destination_filename,
-                                        file_size: metadata.file_size,
-                                        checksum_type: metadata.checksum_type,
-                                        closure_requested: metadata.closure_requested,
-                                        filestore_requests: metadata
-                                            .options
-                                            .iter()
-                                            .filter_map(|op| match op {
-                                                MetadataTLV::FileStoreRequest(req) => {
-                                                    Some(req.clone())
-                                                }
-                                                _ => None,
-                                            })
-                                            .collect(),
-                                        message_to_user: message_to_user.collect(),
-                                    });
-                                }
-                                Ok(())
-                            }
+                            Operations::Metadata(metadata) => self.process_metadata(metadata),
                             // should never receive this as a Receiver type
                             Operations::Finished(_finished) => {
                                 Err(TransactionError::UnexpectedPDU(
@@ -1152,6 +1097,55 @@ impl<T: FileStore> RecvTransaction<T> {
             self.prepare_finished(None);
             self.timer.nak.pause();
         }
+        Ok(())
+    }
+
+    fn process_metadata(&mut self, metadata: MetadataPDU) -> TransactionResult<()> {
+        if self.metadata.is_some() {
+            return Ok(());
+        }
+
+        debug!("Transaction {0} received Metadata.", self.id());
+        let message_to_user = metadata.options.iter().filter_map(|op| match op {
+            MetadataTLV::MessageToUser(req) => Some(req.clone()),
+            _ => None,
+        });
+        // push each request up to the Daemon
+        let source_filename: Utf8PathBuf = metadata.source_filename;
+        let destination_filename: Utf8PathBuf = metadata.destination_filename;
+
+        self.send_indication(Indication::MetadataRecv(MetadataRecvIndication {
+            id: self.id(),
+            source_filename: source_filename.clone(),
+            destination_filename: destination_filename.clone(),
+            file_size: metadata.file_size,
+            transmission_mode: self.config.transmission_mode,
+            user_messages: message_to_user.clone().collect(),
+        }));
+
+        self.metadata = Some(Metadata {
+            source_filename,
+            destination_filename,
+            file_size: metadata.file_size,
+            checksum_type: metadata.checksum_type,
+            closure_requested: metadata.closure_requested,
+            filestore_requests: metadata
+                .options
+                .iter()
+                .filter_map(|op| match op {
+                    MetadataTLV::FileStoreRequest(req) => Some(req.clone()),
+                    _ => None,
+                })
+                .collect(),
+            message_to_user: message_to_user.collect(),
+        });
+
+        if self.file_handle.is_some() {
+            //some data was already being received in a temp file, move it to the final destination
+            self.move_file_data()?;
+        }
+
+        self.check_finished()?;
         Ok(())
     }
 
@@ -1705,13 +1699,13 @@ mod test {
             file_size: input.as_bytes().len() as u64,
             source_filename: path.clone(),
             destination_filename: path.clone(),
-            message_to_user: vec![],
             checksum_type: ChecksumType::Modular,
             filestore_requests: vec![FileStoreRequest {
                 action_code: FileStoreAction::DeleteFile,
                 first_filename: path.clone(),
                 second_filename: "".into(),
             }],
+            message_to_user: vec![],
         });
 
         let (checksum, _overflow) =
@@ -2102,17 +2096,22 @@ mod test {
             indication_tx,
         );
 
-        let path = {
+        let src_path = {
             let mut path = Utf8PathBuf::new();
             path.push("Test_file.txt");
+            path
+        };
+        let dst_path = {
+            let mut path = Utf8PathBuf::new();
+            path.push(format!("Test_file.txt.{:?}", transmission_mode));
             path
         };
 
         transaction.metadata = Some(Metadata {
             closure_requested: true,
             file_size: 600,
-            source_filename: path.clone(),
-            destination_filename: path,
+            source_filename: src_path,
+            destination_filename: dst_path,
             message_to_user: vec![],
             filestore_requests: vec![],
             checksum_type: ChecksumType::Modular,
@@ -2356,6 +2355,7 @@ mod test {
 
         transaction.process_pdu(prompt_pdu).unwrap();
         assert!(transaction.has_pdu_to_send());
+
         transaction
             .send_pdu(transport_tx.reserve().await.unwrap())
             .unwrap();

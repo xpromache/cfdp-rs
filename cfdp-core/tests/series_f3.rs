@@ -348,7 +348,11 @@ fn f3s06(get_filestore: &UsersAndFilestore) {
     let path_to_new = filestore.get_native_path(&new_file);
 
     local_user
-        .put(PutRequest::new_ack("/local/small.txt".into(),out_file.clone() ,EntityID::from(1_u16)))
+        .put(PutRequest::new_ack(
+            "/local/small.txt".into(),
+            out_file.clone(),
+            EntityID::from(1_u16),
+        ))
         .expect("unable to send put request.");
 
     while !path_to_out.exists() {

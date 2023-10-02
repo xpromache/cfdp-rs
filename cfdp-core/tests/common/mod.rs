@@ -341,7 +341,7 @@ impl TestUser {
                                                             .directory_filename,
                                                     },
                                                 ),
-                                            )),                                            
+                                            )),
                                         ],
                                         tailing: false,
                                     },
@@ -566,7 +566,7 @@ impl TestUser {
                                 transmission_mode: TransmissionMode::Unacknowledged,
                                 filestore_requests: vec![],
                                 message_to_user,
-                                tailing: false,                                
+                                tailing: false,
                             };
                             // we should be able to connect to the socket we are running
                             // just fine. but we can ignore errors per
