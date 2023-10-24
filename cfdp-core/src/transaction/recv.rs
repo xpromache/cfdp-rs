@@ -848,83 +848,89 @@ impl<T: FileStore> RecvTransaction<T> {
             TransmissionMode::Acknowledged => {
                 match payload {
                     PDUPayload::FileData(filedata) => {
-                        //the end of the last segment
-                        let prev_end = self.saved_segments.end().unwrap_or(0);
+                        if self.recv_state == RecvState::ReceiveData {
+                            //the end of the last segment
+                            let prev_end = self.saved_segments.end().unwrap_or(0);
 
-                        let (offset, length) = self.store_file_data(filedata)?;
+                            let (offset, length) = self.store_file_data(filedata)?;
 
-                        self.send_indication(Indication::FileSegmentRecv(FileSegmentIndication {
-                            id: self.id(),
-                            offset,
-                            length: length as u64,
-                        }));
+                            self.send_indication(Indication::FileSegmentRecv(
+                                FileSegmentIndication {
+                                    id: self.id(),
+                                    offset,
+                                    length: length as u64,
+                                },
+                            ));
 
-                        if let NakProcedure::Immediate(delay) = self.nak_procedure {
-                            if !self.eof_received() {
-                                if self.timer.nak.timeout_occurred() {
-                                    //send all gaps at the next opportunity
-                                    self.naks = self.get_all_naks();
-                                    self.timer.restart_nak();
-                                } else if offset > prev_end {
-                                    //new gap
-                                    if delay.is_zero() {
-                                        // send it at the next opportunity
-                                        self.naks.push_back(SegmentRequestForm {
-                                            start_offset: prev_end,
-                                            end_offset: offset,
-                                        });
-                                    } else {
-                                        // start a timer to check if the gap still persists after the delta delay
-                                        let mut timer = Counter::new(delay, 1);
-                                        timer.start();
-                                        self.delayed_nack_timers.push((timer, prev_end, offset));
+                            if let NakProcedure::Immediate(delay) = self.nak_procedure {
+                                if !self.eof_received() {
+                                    if self.timer.nak.timeout_occurred() {
+                                        //send all gaps at the next opportunity
+                                        self.naks = self.get_all_naks();
+                                        self.timer.restart_nak();
+                                    } else if offset > prev_end {
+                                        //new gap
+                                        if delay.is_zero() {
+                                            // send it at the next opportunity
+                                            self.naks.push_back(SegmentRequestForm {
+                                                start_offset: prev_end,
+                                                end_offset: offset,
+                                            });
+                                        } else {
+                                            // start a timer to check if the gap still persists after the delta delay
+                                            let mut timer = Counter::new(delay, 1);
+                                            timer.start();
+                                            self.delayed_nack_timers
+                                                .push((timer, prev_end, offset));
+                                        }
                                     }
                                 }
                             }
+                            self.check_finished()?;
                         }
-                        self.check_finished()?;
-
                         Ok(())
                     }
                     PDUPayload::Directive(operation) => {
                         match operation {
                             Operations::EoF(eof) => {
-                                debug!("Transaction {0} received EndOfFile.", self.id());
-                                self.condition = eof.condition;
-                                self.prepare_ack_eof();
-                                self.checksum = Some(eof.checksum);
+                                if self.recv_state == RecvState::ReceiveData {
+                                    debug!("Transaction {0} received EndOfFile.", self.id());
+                                    self.condition = eof.condition;
+                                    self.prepare_ack_eof();
+                                    self.checksum = Some(eof.checksum);
 
-                                self.send_indication(Indication::EoFRecv(self.id()));
+                                    self.send_indication(Indication::EoFRecv(self.id()));
 
-                                if self.condition == Condition::NoError {
-                                    self.check_file_size(eof.file_size)?;
-                                    self.file_size = Some(eof.file_size);
+                                    if self.condition == Condition::NoError {
+                                        self.check_file_size(eof.file_size)?;
+                                        self.file_size = Some(eof.file_size);
 
-                                    self.check_finished()?;
+                                        self.check_finished()?;
 
-                                    if self.has_naks() {
-                                        let delay = match self.nak_procedure {
-                                            NakProcedure::Immediate(d) => d,
-                                            NakProcedure::Deferred(d) => d,
-                                        };
+                                        if self.has_naks() {
+                                            let delay = match self.nak_procedure {
+                                                NakProcedure::Immediate(d) => d,
+                                                NakProcedure::Deferred(d) => d,
+                                            };
 
-                                        if delay.is_zero() {
-                                            //send all gaps at the next opportunity
-                                            self.naks = self.get_all_naks();
-                                        } else {
-                                            // we need to check/send the gaps only after this delta has expired
-                                            // start a counter for that
-                                            self.delayed_nack_timers.push((
-                                                Counter::new(delay, 1),
-                                                0,
-                                                eof.file_size,
-                                            ));
+                                            if delay.is_zero() {
+                                                //send all gaps at the next opportunity
+                                                self.naks = self.get_all_naks();
+                                            } else {
+                                                // we need to check/send the gaps only after this delta has expired
+                                                // start a counter for that
+                                                self.delayed_nack_timers.push((
+                                                    Counter::new(delay, 1),
+                                                    0,
+                                                    eof.file_size,
+                                                ));
+                                            }
                                         }
+                                    } else {
+                                        // Any other condition is essentially a
+                                        // CANCEL operation
+                                        self._cancel();
                                     }
-                                } else {
-                                    // Any other condition is essentially a
-                                    // CANCEL operation
-                                    self._cancel();
                                 }
                                 Ok(())
                             }
